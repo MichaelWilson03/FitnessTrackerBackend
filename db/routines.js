@@ -1,315 +1,168 @@
-/* eslint-disable no-useless-catch */
 const client = require("./client");
+const { attachActivitiesToRoutines } = require("./activities");
 
 async function createRoutine({ creatorId, isPublic, name, goal }) {
-  try {
-    const {
-      rows: [routine],
-    } = await client.query(
-      `
-      INSERT INTO routines("creatorId", "isPublic", name, goal)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *;
+  const newRoutineQuery = await client.query(
+    `
+    INSERT INTO routines ("creatorId", "isPublic", name, goal)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (name) DO NOTHING
+    RETURNING *;
     `,
-      [creatorId, isPublic, name, goal]
-    );
-    return routine;
-  } catch (error) {
-    throw error;
+    [creatorId, isPublic, name, goal]
+  );
+  const newRoutine = newRoutineQuery.rows[0];
+  if (!newRoutine) {
+    throw new Error("No new routine was created");
   }
+  return newRoutine;
 }
 
 async function getRoutineById(id) {
-  try {
-    const {
-      rows: [routine],
-    } = await client.query(
-      `
-      SELECT * FROM routines WHERE id = $1;
-    `,
-      [id]
-    );
-    return routine;
-  } catch (error) {
-    throw error;
-  }
+  const {
+    rows: [routine],
+  } = await client.query(
+    `
+  SELECT * FROM routines
+  WHERE id = $1;
+  `,
+    [id]
+  );
+
+  return routine;
 }
 
 async function getRoutinesWithoutActivities() {
-  try {
-    const { rows } = await client.query(`
-      SELECT * FROM routines;
-    `);
-    return rows;
-  } catch (error) {
-    throw error;
-  }
+  const { rows: routinesWithoutActivities } = await client.query(`
+    SELECT * FROM routines
+    WHERE id NOT IN (
+      SELECT "routineId" FROM routine_activities
+    );
+  `);
+
+  return routinesWithoutActivities;
 }
+
 async function getAllRoutines() {
-  try {
-    const { rows: routines } = await client.query(`
-      SELECT routines.*, users.username AS "creatorName",
-        array_agg(json_build_object(
-          'id', activities.id,
-          'name', activities.name,
-          'description', activities.description,
-          'duration', routine_activities.duration,
-          'count', routine_activities.count,
-          'routineId', routine_activities."routineId",
-          'routineActivityId', routine_activities.id
-        ) ORDER BY routine_activities.id) AS activities
-      FROM routines
-      JOIN users ON routines."creatorId" = users.id
-      LEFT JOIN routine_activities ON routines.id = routine_activities."routineId"
-      LEFT JOIN activities ON routine_activities."activityId" = activities.id
-      GROUP BY routines.id, users.id;
-    `);
-
-    return routines.map((routine) => {
-      const { id, creatorId, isPublic, name, goal, creatorName, activities } =
-        routine;
-
-      return {
-        id,
-        creatorId,
-        isPublic,
-        name,
-        goal,
-        creatorName,
-        activities: activities.filter((activity) => activity.id !== null),
-      };
-    });
-  } catch (error) {
-    throw error;
-  }
+  const { rows: routines } = await client.query(
+    `
+    SELECT r.id, r."creatorId", u.username "creatorName", r."isPublic", r.name, r.goal
+    FROM routines r
+    JOIN users u ON r."creatorId" = u.id;
+    `
+  );
+  const updatedRoutines = await attachActivitiesToRoutines(routines);
+  return updatedRoutines;
 }
 
 async function getAllPublicRoutines() {
-  try {
-    const { rows: routines } = await client.query(`
-      SELECT routines.*, users.username AS "creatorName",
-        json_agg(
-          json_build_object(
-            'id', activities.id,
-            'name', activities.name,
-            'description', activities.description,
-            'duration', routine_activities.duration,
-            'count', routine_activities.count,
-            'routineId', routine_activities."routineId",
-            'routineActivityId', routine_activities.id
-          )
-        ) AS activities
-      FROM routines
-      JOIN users ON routines."creatorId" = users.id
-      LEFT JOIN routine_activities ON routines.id = routine_activities."routineId"
-      LEFT JOIN activities ON routine_activities."activityId" = activities.id
-      WHERE routines."isPublic" = true
-      GROUP BY routines.id, users.id;
-    `);
+  const { rows: routines } = await client.query(
+    `
+  SELECT r.* , u.username "creatorName"
+  FROM routines r
+  JOIN users u ON r."creatorId" = u.id
+  WHERE "isPublic" = true;
 
-    return routines.map((routine) => {
-      const { id, creatorId, isPublic, name, goal, creatorName, activities } =
-        routine;
+  `
+  );
+  const updatedRoutines = await attachActivitiesToRoutines(routines);
 
-      return {
-        id,
-        creatorId,
-        isPublic,
-        name,
-        goal,
-        creatorName,
-        activities: activities.filter((activity) => activity.id !== null),
-      };
-    });
-  } catch (error) {
-    throw error;
-  }
+  return updatedRoutines;
 }
 
 async function getAllRoutinesByUser({ username }) {
-  try {
-    const { rows: routines } = await client.query(
-      `
-      SELECT routines.*, users.username AS "creatorName",
-        json_agg(
-          json_build_object(
-            'id', activities.id,
-            'name', activities.name,
-            'description', activities.description,
-            'duration', routine_activities.duration,
-            'count', routine_activities.count,
-            'routineId', routine_activities."routineId",
-            'routineActivityId', routine_activities.id
-          )
-        ) AS activities
-      FROM routines
-      JOIN users ON routines."creatorId" = users.id
-      LEFT JOIN routine_activities ON routines.id = routine_activities."routineId"
-      LEFT JOIN activities ON routine_activities."activityId" = activities.id
-      WHERE users.username = $1
-      GROUP BY routines.id, users.id;
-    `,
-      [username]
-    );
+  const { rows: routines } = await client.query(
+    `
+  SELECT r.* , u.username "creatorName"
+  FROM routines r
+  JOIN users u ON r."creatorId" = u.id
+  WHERE "creatorId" = (SELECT id FROM users WHERE username = $1);
+  `,
+    [username]
+  );
+  const updatedRoutines = await attachActivitiesToRoutines(routines);
 
-    return routines.map((routine) => {
-      const { id, creatorId, isPublic, name, goal, creatorName, activities } =
-        routine;
-
-      return {
-        id,
-        creatorId,
-        isPublic,
-        name,
-        goal,
-        creatorName,
-        activities: activities.filter((activity) => activity.id !== null),
-      };
-    });
-  } catch (error) {
-    throw error;
+  if (updatedRoutines) {
+    return updatedRoutines;
   }
 }
 
 async function getPublicRoutinesByUser({ username }) {
-  try {
-    const { rows: publicRoutines } = await client.query(
-      `
-      SELECT routines.*, users.username AS "creatorName",
-        json_agg(
-          json_build_object(
-            'id', activities.id,
-            'name', activities.name,
-            'description', activities.description,
-            'duration', routine_activities.duration,
-            'count', routine_activities.count,
-            'routineId', routine_activities."routineId",
-            'routineActivityId', routine_activities.id
-          )
-        ) AS activities
-      FROM routines
-      JOIN users ON routines."creatorId" = users.id
-      LEFT JOIN routine_activities ON routines.id = routine_activities."routineId"
-      LEFT JOIN activities ON routine_activities."activityId" = activities.id
-      WHERE users.username = $1 AND routines."isPublic" = true
-      GROUP BY routines.id, users.id;
-    `,
-      [username]
-    );
+  const { rows: routines } = await client.query(
+    `
+  SELECT r.* , u.username "creatorName"
+  FROM routines r
+  JOIN users u ON r."creatorId" = u.id
+  WHERE "creatorId" = (SELECT id FROM users WHERE username = $1)
+  AND "isPublic";
+  `,
+    [username]
+  );
+  const updatedRoutines = await attachActivitiesToRoutines(routines);
 
-    return publicRoutines.map((routine) => {
-      const { id, creatorId, isPublic, name, goal, creatorName, activities } =
-        routine;
-
-      return {
-        id,
-        creatorId,
-        isPublic,
-        name,
-        goal,
-        creatorName,
-        activities: activities.filter((activity) => activity.id !== null),
-      };
-    });
-  } catch (error) {
-    throw error;
+  if (updatedRoutines) {
+    return updatedRoutines;
   }
 }
 
 async function getPublicRoutinesByActivity({ id }) {
-  try {
-    const { rows: publicRoutines } = await client.query(
-      `
-      SELECT routines.*, users.username AS "creatorName",
-        json_agg(
-          json_build_object(
-            'id', activities.id,
-            'name', activities.name,
-            'description', activities.description,
-            'duration', routine_activities.duration,
-            'count', routine_activities.count,
-            'routineId', routine_activities."routineId",
-            'routineActivityId', routine_activities.id
-          )
-        ) AS activities
-      FROM routines
-      JOIN routine_activities ON routines.id = routine_activities."routineId"
-      JOIN activities ON routine_activities."activityId" = activities.id
-      JOIN users ON routines."creatorId" = users.id
-      WHERE routine_activities."activityId" = $1 AND routines."isPublic" = true
-      GROUP BY routines.id, users.id;
-    `,
-      [id]
-    );
+  const { rows: routines } = await client.query(
+    `
+  SELECT r.* , u.username "creatorName"
+  FROM routines r
+  JOIN users u ON r."creatorId" = u.id
+  WHERE r.id IN 
+  (SELECT "routineId" FROM "routine_activities" WHERE "activityId" = $1)
+  AND "isPublic";
+  `,
+    [id]
+  );
 
-    if (publicRoutines.length === 0) {
-      throw new Error("No public routines found for the activity");
-    }
+  const updatedRoutines = await attachActivitiesToRoutines(routines);
 
-    return publicRoutines.map((routine) => {
-      const { id, creatorId, isPublic, name, goal, creatorName, activities } =
-        routine;
-
-      return {
-        id,
-        creatorId,
-        isPublic,
-        name,
-        goal,
-        creatorName,
-        activities: activities.filter((activity) => activity.id !== null),
-      };
-    });
-  } catch (error) {
-    throw error;
-  }
+  return updatedRoutines;
 }
 
 async function updateRoutine({ id, ...fields }) {
-  try {
-    const setString = Object.keys(fields)
-      .map((key, index) => `"${key}" = $${index + 2}`)
-      .join(", ");
-    const values = Object.values(fields);
-    const {
-      rows: [routine],
-    } = await client.query(
-      `
-      UPDATE routines
-      SET ${setString}
-      WHERE id = $1
-      RETURNING *;
-    `,
-      [id, ...values]
-    );
-    return routine;
-  } catch (error) {
-    throw error;
-  }
+  //isPublic, name, goal
+
+  const setString = Object.keys(fields)
+    .map((key, idx) => `"${key}" = $${idx + 1}`)
+    .join(", ");
+
+  const {
+    rows: [routine],
+  } = await client.query(
+    `
+  UPDATE routines
+  SET ${setString}
+  WHERE id = ${id}
+  RETURNING *;
+  `,
+    Object.values(fields)
+  );
+
+  return routine;
 }
 
 async function destroyRoutine(id) {
-  try {
-    // Delete routine_activities first
-    await client.query(
-      `
-      DELETE FROM routine_activities WHERE "routineId" = $1;
-    `,
-      [id]
-    );
+  await client.query(
+    `
+    DELETE FROM routine_activities
+    WHERE "routineId" = ${id};
+    `
+  );
 
-    // Delete the routine
-    await client.query(
-      `
-      DELETE FROM routines WHERE id = $1;
-    `,
-      [id]
-    );
-
-    return;
-  } catch (error) {
-    throw error;
-  }
+  const {
+    rows: [destroyedRoutine],
+  } = await client.query(
+    `
+    DELETE FROM routines
+    WHERE id = ${id}
+    RETURNING *;
+    `
+  );
+  return destroyedRoutine;
 }
 
 module.exports = {

@@ -1,3 +1,4 @@
+/* eslint-disable no-useless-catch */
 const express = require("express");
 const router = express.Router();
 const bcrypt = require("bcrypt");
@@ -5,11 +6,8 @@ const jwt = require("jsonwebtoken");
 const {
   getUserByUsername,
   createUser,
-  getUserWithRoutinesById,
+  getAllRoutinesByUser,
   getPublicRoutinesByUser,
-  createRoutine,
-  addActivityToRoutine,
-  getRoutineActivitiesByRoutine,
 } = require("../db");
 const {
   UnauthorizedError,
@@ -17,37 +15,61 @@ const {
   PasswordTooShortError,
 } = require("../errors");
 
+const { JWT_SECRET = "neverTell" } = process.env;
 // Generate a JSON Web Token
-const generateToken = (payload) => {
-  return jwt.sign(payload, process.env.JWT_SECRET);
-};
+function generateToken(user) {
+  const payload = {
+    id: user.id,
+    username: user.username,
+  };
+  const options = {
+    expiresIn: "1h", // or whatever time limit you want on tokens
+  };
+  return jwt.sign(payload, JWT_SECRET, options);
+}
 
 // Register a new user
+// Register a new user
 router.post("/register", async (req, res, next) => {
-  try {
-    const { username, password } = req.body.user; // Extract the username and password from the nested "user" object
+  const { username, password } = req.body;
 
+  try {
+    // console.log(req.body);
+
+    // Check if the username is already taken
     const existingUser = await getUserByUsername(username);
     if (existingUser) {
-      throw new UserTakenError(username);
+      // console.log(existingUser);
+      return res.status(400).json({
+        error: UserTakenError(username),
+        message: UserTakenError(username),
+        name: UserTakenError(username),
+      });
+    }
+    // console.log(password);
+    // Check if the password is at least 8 characters long
+    if (password.length <= 8) {
+      return res.status(400).json({
+        error: PasswordTooShortError(),
+        message: PasswordTooShortError(),
+        name: PasswordTooShortError(),
+      });
     }
 
-    if (password.length < 8) {
-      throw new PasswordTooShortError();
-    }
+    // Hash the password and create a new user
+    // const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await createUser({ username, password });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await createUser({ username, password: hashedPassword });
-    const token = generateToken({ id: user.id, username: user.username });
+    // Generate a token for the user
+    // const token = jwt.sign({ id: user.id, username });
+    // console.log(token);
 
     // Return the response object with the correct properties
-    res.json({
-      success: true,
-      error: null,
-      data: {
-        token,
-        message: "Thanks for signing up for our service.",
-      },
+    return res.json({
+      message: "Thanks for signing up for our service.",
+      token: generateToken(user),
+      user,
+      // user: { id: user.id, username: user.username },
     });
   } catch (error) {
     next(error);
@@ -56,8 +78,8 @@ router.post("/register", async (req, res, next) => {
 
 // Login user
 router.post("/login", async (req, res, next) => {
+  const { username, password } = req.body;
   try {
-    const { username, password } = req.body;
     const user = await getUserByUsername(username);
 
     if (!user) {
@@ -70,12 +92,10 @@ router.post("/login", async (req, res, next) => {
       throw new UnauthorizedError();
     }
 
-    const token = generateToken({ id: user.id, username: user.username });
-
     res.json({
-      message: "You're logged in!",
-      token,
+      token: generateToken({ id: user.id, username: user.username }),
       user: { id: user.id, username: user.username },
+      message: "you're logged in!",
     });
   } catch (error) {
     next(error);
@@ -84,15 +104,23 @@ router.post("/login", async (req, res, next) => {
 
 // Get user profile
 router.get("/me", async (req, res, next) => {
+  const bearer = "Bearer ";
+  const auth = req.headers.authorization;
+  let token;
+  if (auth) {
+    token = auth.slice(bearer.length);
+  }
+  if (!token) {
+    res.status(401);
+    return res.json({
+      error: UnauthorizedError(),
+      message: UnauthorizedError(),
+      name: UnauthorizedError(),
+    });
+  }
   try {
-    const userId = req.user.id;
-    const user = await getUserWithRoutinesById(userId);
-
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    res.json({ id: user.id, username: user.username });
+    const { id, username } = jwt.verify(token, JWT_SECRET);
+    res.send({ id, username, active: true });
   } catch (error) {
     next(error);
   }
@@ -100,74 +128,20 @@ router.get("/me", async (req, res, next) => {
 
 // Get public routines for a particular user
 router.get("/:username/routines", async (req, res, next) => {
+  const { username } = req.params;
+  // console.log(req.user);
+  // console.log(username);
   try {
-    const { username } = req.params;
-    const user = await getUserByUsername(username);
-
-    if (!user) {
-      throw new Error("User not found");
+    if (req.user.username === username) {
+      const routines = await getAllRoutinesByUser(username);
+      res.send(routines);
+    } else {
+      const publicRoutine = await getPublicRoutinesByUser(username);
+      res.send(publicRoutine);
     }
-
-    const routines = await getPublicRoutinesByUser(user.id);
-
-    res.json(routines);
   } catch (error) {
     next(error);
   }
 });
 
-// Create a new routine for the logged-in user
-router.post("/routines", async (req, res, next) => {
-  try {
-    const { name, goal } = req.body;
-    const { id: creatorId } = req.user;
-
-    const routine = await createRoutine({
-      creatorId,
-      isPublic: false,
-      name,
-      goal,
-    });
-
-    res.json(routine);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Add an activity to a routine
-router.post("/routines/:routineId/activities", async (req, res, next) => {
-  try {
-    const { routineId } = req.params;
-    const { activityId, count, duration } = req.body;
-
-    const routineActivity = await addActivityToRoutine({
-      routineId,
-      activityId,
-      count,
-      duration,
-    });
-
-    res.json(routineActivity);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Get activities for a routine
-router.get("/routines/:routineId/activities", async (req, res, next) => {
-  try {
-    const { routineId } = req.params;
-
-    const activities = await getRoutineActivitiesByRoutine(routineId);
-
-    res.json(activities);
-  } catch (error) {
-    next(error);
-  }
-});
-
-module.exports = {
-  router,
-  generateToken,
-};
+module.exports = router;

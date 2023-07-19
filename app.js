@@ -1,8 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const activitiesRouter = require("./api/activities");
-const { router: usersRouter } = require("./api/users"); // Import the router from users.js
+const usersRouter = require("./api/users.js"); // Import the router from users.js
 const routinesRouter = require("./api/routines");
+// const { router: routineActivitiesRouter } = require("./api/routine_activities");
 const routineActivitiesRouter = require("./api/routineActivities");
 
 const app = express();
@@ -23,7 +24,7 @@ app.get("/api/health", (req, res) => {
 });
 
 // Route handler for unknown routes
-app.use((req, res, next) => {
+app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
 });
 

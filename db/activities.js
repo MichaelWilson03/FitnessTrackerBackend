@@ -1,117 +1,115 @@
-/* eslint-disable no-useless-catch */
 const client = require("./client");
 
 // database functions
 async function createActivity({ name, description }) {
-  try {
-    const lowercaseName = name.toLowerCase(); // Lowercase the activity name for uniqueness
-    const capitalizedName =
-      lowercaseName.charAt(0).toUpperCase() + lowercaseName.slice(1); // Capitalize the first letter
-    const {
-      rows: [activity],
-    } = await client.query(
-      `
-      INSERT INTO activities(name, description)
-      VALUES ($1, $2)
-      RETURNING *;
+  // return the new activity
+  const {
+    rows: [newActivity],
+  } = await client.query(
+    `
+    INSERT INTO activities (name, description)
+    VALUES ($1, $2)
+    ON CONFLICT (name) DO NOTHING
+    RETURNING *;
     `,
-      [capitalizedName, description]
-    );
-    activity.name = capitalizedName; // Update the activity name to capitalized before returning
-    return activity;
-  } catch (error) {
-    throw error;
-  }
+    [name, description]
+  );
+
+  return newActivity;
 }
 
 async function getAllActivities() {
-  try {
-    const { rows } = await client.query(`
-      SELECT * FROM activities;
-    `);
-    return rows;
-  } catch (error) {
-    throw error;
-  }
+  // select and return an array of all activities
+  const { rows: allActivities } = await client.query(`
+  SELECT * FROM activities;
+  `);
+
+  return allActivities;
 }
 
 async function getActivityById(id) {
-  try {
-    const {
-      rows: [activity],
-    } = await client.query(
-      `
-      SELECT * FROM activities WHERE id = $1;
-    `,
-      [id]
-    );
-    return activity;
-  } catch (error) {
-    throw error;
-  }
+  const {
+    rows: [activity],
+  } = await client.query(
+    `
+    SELECT * FROM activities
+    WHERE id = $1;
+  `,
+    [id]
+  );
+
+  return activity;
 }
 
 async function getActivityByName(name) {
-  try {
-    const lowercaseName = name.toLowerCase(); // Lowercase the activity name for case-insensitive search
-    const {
-      rows: [activity],
-    } = await client.query(
-      `
-      SELECT * FROM activities WHERE LOWER(name) = $1;
-    `,
-      [lowercaseName]
-    );
-    return activity;
-  } catch (error) {
-    throw error;
-  }
+  const {
+    rows: [activity],
+  } = await client.query(
+    `
+  SELECT * FROM activities
+  WHERE name = $1;
+  `,
+    [name]
+  );
+
+  return activity;
 }
 
+// used as a helper inside db/routines.js
 async function attachActivitiesToRoutines(routines) {
-  try {
-    const routineIds = routines.map((routine) => routine.id);
-    const { rows: routineActivities } = await client.query(
+  const updatedRoutines = [];
+
+  for (let routine of routines) {
+    const routineId = routine.id;
+
+    const { rows: activities } = await client.query(
       `
-      SELECT * FROM routine_activities WHERE "routineId" = ANY($1);
-    `,
-      [routineIds]
+      SELECT a.id, name, description, duration, count, "routineId", ra.id "routineActivityId"
+      FROM routine_activities ra
+      JOIN activities a ON ra."activityId" = a.id
+      WHERE "routineId" = $1;
+  
+      `,
+      [routineId]
     );
-
-    const routinesWithActivities = routines.map((routine) => {
-      routine.activities = routineActivities.filter(
-        (activity) => activity.routineId === routine.id
-      );
-      return routine;
-    });
-
-    return routinesWithActivities;
-  } catch (error) {
-    throw error;
+    routine.activities = activities;
+    updatedRoutines.push(routine);
   }
+  return updatedRoutines;
 }
 
 async function updateActivity({ id, ...fields }) {
-  try {
-    const setString = Object.keys(fields)
-      .map((key, index) => `"${key}" = $${index + 2}`)
-      .join(", ");
-    const values = Object.values(fields);
-    const {
-      rows: [activity],
-    } = await client.query(
-      `
-      UPDATE activities
-      SET ${setString}
-      WHERE id = $1
-      RETURNING *;
-    `,
-      [id, ...values]
-    );
-    return activity;
-  } catch (error) {
-    throw error;
+  const updateKeys = [];
+  const updateValues = [];
+
+  if (fields.name) {
+    updateKeys.push("name");
+    updateValues.push(fields.name);
   }
+  if (fields.description) {
+    updateKeys.push("description");
+    updateValues.push(fields.description);
+  }
+
+  const setString = updateKeys
+    .map((key, idx) => `${key} = '${updateValues[idx]}'`)
+    .join(", ");
+
+  const {
+    rows: [activity],
+  } = await client.query(
+    `
+  UPDATE activities
+  SET ${setString}
+  WHERE id = ${id}
+  RETURNING *;
+  `
+  );
+
+  return activity;
+  // don't try to update the id
+  // do update the name and description
+  // return the updated activity
 }
 
 module.exports = {

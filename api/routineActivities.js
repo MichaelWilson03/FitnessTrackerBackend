@@ -1,69 +1,68 @@
 const express = require("express");
 const router = express.Router();
-
-// Import the necessary models and error classes
 const {
   updateRoutineActivity,
+  getRoutineActivityById,
+  getRoutineById,
   destroyRoutineActivity,
-  canEditRoutineActivity,
-} = require("../db/routine_activities");
-const {
-  UnauthorizedUpdateError,
-  UnauthorizedDeleteError,
-} = require("../errors");
+} = require("../db");
 
-// PATCH /routine_activities/:routineActivityId
+router.use((req, res, next) => {
+  console.log("A request is being made to /routine_activities");
+  next();
+});
+
+// PATCH /api/routine_activities/:routineActivityId
+
 router.patch("/:routineActivityId", async (req, res, next) => {
+  const { duration, count } = req.body;
+  const { routineActivityId } = req.params;
   try {
-    const { routineActivityId } = req.params;
-    const { count, duration } = req.body;
+    const { routineId } = await getRoutineActivityById(routineActivityId);
+    const routine = await getRoutineById(routineId);
 
-    // Check if the logged-in user can edit the routine activity
-    const canEdit = await canEditRoutineActivity(
-      routineActivityId,
-      req.user.id
-    );
-    if (!canEdit) {
-      throw new UnauthorizedUpdateError(
-        "User is not allowed to update this routine activity"
-      );
+    if (routine.creatorId !== req.user.id) {
+      next({
+        message: `User ${req.user.username} is not allowed to update ${routine.name}`,
+        name: "UnauthorizedUser",
+      });
     }
 
-    // Update the routine activity
-    const updatedRoutineActivity = await updateRoutineActivity(
-      routineActivityId,
+    const updatedRoutineActivity = await updateRoutineActivity({
+      id: routineActivityId,
+      duration,
       count,
-      duration
-    );
-
-    // Send the response
-    res.json(updatedRoutineActivity);
+    });
+    res.send(updatedRoutineActivity);
   } catch (error) {
     next(error);
   }
+
+  next();
 });
 
-// DELETE /routine_activities/:routineActivityId
-router.delete("/:routineActivityId", async (req, res, next) => {
-  try {
-    const { routineActivityId } = req.params;
+// DELETE /api/routine_activities/:routineActivityId
 
-    // Check if the logged-in user can delete the routine activity
-    const canDelete = await canEditRoutineActivity(
-      routineActivityId,
-      req.user.id
-    );
-    if (!canDelete) {
-      throw new UnauthorizedDeleteError(
-        "User is not allowed to delete this routine activity"
-      );
+router.delete("/:routineActivityId", async (req, res, next) => {
+  const { routineActivityId } = req.params;
+
+  try {
+    const { routineId } = await getRoutineActivityById(routineActivityId);
+    const routine = await getRoutineById(routineId);
+
+    if (routine.creatorId !== req.user.id) {
+      res.status(403).send({
+        error: "Error",
+        message: `User ${req.user.username} is not allowed to delete ${routine.name}`,
+        name: "UnauthorizedUser",
+      });
     }
 
-    // Delete the routine activity
-    await destroyRoutineActivity(routineActivityId);
+    const deletedRoutineActivity = await destroyRoutineActivity(
+      routineActivityId
+    );
 
-    // Send the response
-    res.json({ success: true, id: routineActivityId });
+    res.send(deletedRoutineActivity);
   } catch (error) {
     next(error);
   }

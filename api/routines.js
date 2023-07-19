@@ -1,12 +1,25 @@
 const express = require("express");
 const router = express.Router();
-const Routine = require("../db/routines");
-const User = require("../db/users");
 
+const {
+  getAllPublicRoutines,
+  createRoutine,
+  updateRoutine,
+  getRoutineById,
+  destroyRoutine,
+  addActivityToRoutine,
+  getRoutineActivitiesByRoutine,
+  getPublicRoutinesByUser,
+  getAllRoutinesByUser,
+} = require("../db");
+// const { routine } = require("../db");
+
+const { UnauthorizedError } = require("../errors");
 // GET /api/routines
+
 router.get("/", async (req, res, next) => {
   try {
-    const routines = await Routine.find().populate("activities");
+    const routines = await getAllPublicRoutines();
     res.json(routines);
   } catch (error) {
     next(error);
@@ -15,110 +28,118 @@ router.get("/", async (req, res, next) => {
 
 // POST /api/routines
 router.post("/", async (req, res, next) => {
+  const { isPublic, name, goal } = req.body;
   try {
-    const { title, description } = req.body;
-    const userId = req.user.id;
-
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
+    if (req.user) {
+      const creatorId = req.user.id;
+      const newRoutine = await createRoutine({
+        creatorId,
+        isPublic,
+        name,
+        goal,
+      });
+      res.send(newRoutine);
+    } else {
+      next({
+        message: "You must be logged in to perform this action",
+        name: "NotLoggedIn",
+      });
     }
-
-    const routine = await Routine.create({
-      title,
-      description,
-      creatorId: userId,
-    });
-
-    res.status(201).json(routine);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// GET /api/routines/:routineId
-router.get("/:routineId", async (req, res, next) => {
-  try {
-    const { routineId } = req.params;
-
-    const routine = await Routine.findById(routineId).populate("activities");
-
-    if (!routine) {
-      return res.status(404).json({ error: "Routine not found" });
-    }
-
-    res.json(routine);
   } catch (error) {
     next(error);
   }
 });
 
 // PATCH /api/routines/:routineId
+
 router.patch("/:routineId", async (req, res, next) => {
+  const { routineId } = req.params;
+  const { isPublic, name, goal } = req.body;
   try {
-    const { routineId } = req.params;
-    const { title, description, isPublic, goal } = req.body;
+    if (req.user) {
+      const routineToUpdate = await getRoutineById(routineId);
+      if (routineToUpdate.creatorId !== req.user.id) {
+        res.status(403).send({
+          error: "Error",
+          message: `User ${req.user.username} is not allowed to update ${routineToUpdate.name}`,
+          name: "WrongUserError",
+        });
+      }
 
-    const updatedRoutine = await Routine.findByIdAndUpdate(
-      routineId,
-      { title, description, isPublic, goal },
-      { new: true }
-    );
-
-    if (!updatedRoutine) {
-      return res.status(404).json({ error: "Routine not found" });
+      const updatedRoutine = await updateRoutine({
+        id: routineId,
+        isPublic,
+        name,
+        goal,
+      });
+      res.send(updatedRoutine);
+    } else {
+      next({
+        message: "You must be logged in to perform this action",
+        name: "NotLoggedIn",
+      });
     }
-
-    res.json(updatedRoutine);
   } catch (error) {
     next(error);
   }
 });
 
 // DELETE /api/routines/:routineId
+
 router.delete("/:routineId", async (req, res, next) => {
+  const { routineId } = req.params;
   try {
-    const { routineId } = req.params;
+    if (req.user) {
+      const routineToDestroy = await getRoutineById(routineId);
+      if (routineToDestroy.creatorId !== req.user.id) {
+        res.status(403).send({
+          error: "Error",
+          name: "UnauthorizedUser",
+          message: `User ${req.user.username} is not allowed to delete ${routineToDestroy.name}`,
+        });
+      }
 
-    const deletedRoutine = await Routine.findByIdAndDelete(routineId);
-
-    if (!deletedRoutine) {
-      return res.status(404).json({ error: "Routine not found" });
+      const deletedRoutine = await destroyRoutine(routineId);
+      res.send(deletedRoutine);
     }
-
-    res.sendStatus(204);
   } catch (error) {
     next(error);
   }
+
+  next();
 });
 
 // POST /api/routines/:routineId/activities
+
 router.post("/:routineId/activities", async (req, res, next) => {
+  const { routineId } = req.params;
+  const { activityId, count, duration } = req.body;
+
   try {
-    const { routineId } = req.params;
-    const { activityId } = req.body;
+    const routineSearch = await getRoutineActivitiesByRoutine({
+      id: routineId,
+    });
 
-    const routine = await Routine.findById(routineId);
-
-    if (!routine) {
-      return res.status(404).json({ error: "Routine not found" });
-    }
-
-    if (routine.activities.includes(activityId)) {
-      return res
-        .status(400)
-        .json({ error: "Activity already exists in the routine" });
-    }
-
-    routine.activities.push(activityId);
-    await routine.save();
-
-    const populatedRoutine = await Routine.findById(routineId).populate(
-      "activities"
+    const match = routineSearch.find(
+      (routine) =>
+        activityId == routine.activityId && routineId == routine.routineId
     );
 
-    res.json(populatedRoutine);
+    if (match) {
+      next({
+        message: `Activity ID ${activityId} already exists in Routine ID ${match.routineId}`,
+        name: "RoutineActivityAlreadyExists",
+      });
+    }
+
+    const routineActivity = await addActivityToRoutine({
+      routineId,
+      activityId,
+      count,
+      duration,
+    });
+
+    res.send(routineActivity);
   } catch (error) {
     next(error);
   }

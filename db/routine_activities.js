@@ -1,4 +1,3 @@
-/* eslint-disable no-useless-catch */
 const client = require("./client");
 
 async function addActivityToRoutine({
@@ -9,16 +8,18 @@ async function addActivityToRoutine({
 }) {
   try {
     const {
-      rows: [routineActivity],
+      rows: [routine_activities],
     } = await client.query(
       `
-      INSERT INTO routine_activities("routineId", "activityId", count, duration)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *;
+    INSERT INTO routine_activities("routineId", "activityId", count, duration)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT ("routineId", "activityId") DO NOTHING
+    RETURNING *;
     `,
       [routineId, activityId, count, duration]
     );
-    return routineActivity;
+
+    return routine_activities;
   } catch (error) {
     throw error;
   }
@@ -27,14 +28,17 @@ async function addActivityToRoutine({
 async function getRoutineActivityById(id) {
   try {
     const {
-      rows: [routineActivity],
+      rows: [routine_activity],
     } = await client.query(
       `
-      SELECT * FROM routine_activities WHERE id = $1;
+    SELECT *
+    FROM routine_activities
+    WHERE id = $1;
     `,
       [id]
     );
-    return routineActivity;
+
+    return routine_activity;
   } catch (error) {
     throw error;
   }
@@ -42,16 +46,16 @@ async function getRoutineActivityById(id) {
 
 async function getRoutineActivitiesByRoutine({ id }) {
   try {
-    const { rows: routineActivities } = await client.query(
+    const { rows: routine_activities } = await client.query(
       `
-      SELECT routine_activities.*, activities.name, activities.description
-      FROM routine_activities
-      JOIN activities ON routine_activities."activityId" = activities.id
-      WHERE routine_activities."routineId" = $1;
+    SELECT *
+    FROM routine_activities
+    WHERE "routineId" = $1;
     `,
       [id]
     );
-    return routineActivities;
+
+    return routine_activities;
   } catch (error) {
     throw error;
   }
@@ -60,21 +64,22 @@ async function getRoutineActivitiesByRoutine({ id }) {
 async function updateRoutineActivity({ id, ...fields }) {
   try {
     const setString = Object.keys(fields)
-      .map((key, index) => `"${key}" = $${index + 2}`)
+      .map((key, index) => `"${key}"=$${index + 1}`)
       .join(", ");
-    const values = Object.values(fields);
+
     const {
-      rows: [routineActivity],
+      rows: [routine_activity],
     } = await client.query(
       `
       UPDATE routine_activities
       SET ${setString}
-      WHERE id = $1
+      WHERE id = ${id}
       RETURNING *;
-    `,
-      [id, ...values]
+      `,
+      Object.values(fields)
     );
-    return routineActivity;
+
+    return routine_activity;
   } catch (error) {
     throw error;
   }
@@ -83,14 +88,17 @@ async function updateRoutineActivity({ id, ...fields }) {
 async function destroyRoutineActivity(id) {
   try {
     const {
-      rows: [deletedRoutineActivity],
+      rows: [routine_activity],
     } = await client.query(
       `
-      DELETE FROM routine_activities WHERE id = $1 RETURNING *;
+    DELETE FROM routine_activities
+    WHERE id = $1
+    RETURNING *;
     `,
       [id]
     );
-    return deletedRoutineActivity;
+
+    return routine_activity;
   } catch (error) {
     throw error;
   }
@@ -99,17 +107,18 @@ async function destroyRoutineActivity(id) {
 async function canEditRoutineActivity(routineActivityId, userId) {
   try {
     const {
-      rows: [routineActivity],
+      rows: [routine],
     } = await client.query(
       `
-      SELECT routines."creatorId"
-      FROM routine_activities
-      JOIN routines ON routine_activities."routineId" = routines.id
-      WHERE routine_activities.id = $1;
+    SELECT routines."creatorId"
+    FROM routines
+    JOIN routine_activities
+    ON routine_activities."routineId" = routines.id AND routine_activities.id = $1;
     `,
       [routineActivityId]
     );
-    return routineActivity.creatorId === userId;
+
+    return routine.creatorId === userId;
   } catch (error) {
     throw error;
   }
