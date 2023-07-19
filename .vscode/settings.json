@@ -1,11 +1,4 @@
 {
   "npm.enableRunFromFolder": false,
   "pgsql.connections": [
-    {
-      "server": "{{PostgreSQL 15}",
-      "database": "{{ fitness-dev}}",
-      "user": "{{michaelwilson }}",
-      "password": "{{Kaiden0304!}}"
-    }
-  ]
-}
+  
